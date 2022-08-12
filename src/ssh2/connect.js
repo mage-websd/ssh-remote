@@ -1,7 +1,7 @@
-const { readFileSync } = require('fs');
+const fs = require('fs');
 const { Client } = require('ssh2');
 const { logInfo, logError } = require('../app-log');
-const { HOSTS, cmdAll } = require('../hosts');
+const { HOSTS, CMD_ALL } = require('../hosts');
 
 const runSingleCmd = (conn, itemHost, cmds, index) => {
   if (!index) {
@@ -20,12 +20,24 @@ const runSingleCmd = (conn, itemHost, cmds, index) => {
     stream.on('close', (code, signal) => {
       runSingleCmd(conn, itemHost, cmds, index + 1);
     }).on('data', (data) => {
-      console.log(itemHost.title, cmds[index]);
       logInfo(itemHost.title, cmds[index], data.toString());
     }).stderr.on('data', (data) => {
       logInfo(itemHost.title, 'ERROR', cmds[index], data.toString());
     });
   });
+};
+
+const runHostPutFile = (putFile) => {
+  if (!putFile || putFile.length === 0) {
+    return [];
+  }
+  const putFileExec = [];
+  for (const i in putFile) {
+    const item = putFile[i];
+    const data = fs.readFileSync(item.local, {encoding:'utf8', flag:'r'}).replaceAll('"', '\\\"');
+    putFileExec.push(`printf "${data}" > ${item.remote}`);
+  }
+  return putFileExec;
 };
 
 const runHostAndCmd = (itemHost, cmds) => {
@@ -35,13 +47,15 @@ const runHostAndCmd = (itemHost, cmds) => {
       if (itemHost.cmd && itemHost.cmd.length > 0) {
         cmds = cmds.concat(itemHost.cmd);
       }
+      cmds = cmds.concat(runHostPutFile(itemHost.putFile));
+      
       runSingleCmd(conn, itemHost, cmds, 0);
     })
     .connect({
       host: itemHost.host,
       port: itemHost.port,
       username: itemHost.username,
-      privateKey: readFileSync(itemHost.privateKey)
+      privateKey: fs.readFileSync(itemHost.privateKey)
     })
     .on('end', () => {
       resolve();
@@ -52,7 +66,16 @@ const runHostAndCmd = (itemHost, cmds) => {
   });
 }
 
+const execCmdAll = (cmdAll) => {
+  var cmd = cmdAll.cmd;
+  if (cmdAll.putFile && cmdAll.putFile.length > 0) {
+    cmd = cmd.concat(runHostPutFile(cmdAll.putFile));
+  }
+  return cmd;
+}
+
 const runHostsAndCmd = async () => {
+  const cmdAll = execCmdAll(CMD_ALL);
   for (const i in HOSTS) {
     await runHostAndCmd(HOSTS[i], cmdAll);
   }
